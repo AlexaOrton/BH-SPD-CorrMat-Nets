@@ -1,5 +1,8 @@
 function [net, info] = spdnet_train_afew(net, spd_train, opts)
 
+addpath(genpath('/home/ortale003/U-SPDNet-HPC'));
+addpath(genpath('/scratch/ortale003/data'));
+
 opts.errorLabels = {'top1e'};
 opts.train = find(spd_train.spd.set==1) ; % 1 represents the training samples
 opts.val = find(spd_train.spd.set==2) ; % 2 indicates the testing samples
@@ -44,13 +47,10 @@ for epoch = 1 : opts.numEpochs
     
     train = opts.train(randperm(length(opts.train))) ; % data_label; shuffle, to make the training data feed into the net in disorder
     val = opts.val; % the train data is in order to pass the net
-    [net,stats.train] = process_epoch(opts, epoch, spd_train, train, learningRate, net) ;
-    [net,stats.val] = process_epoch(opts, epoch, spd_train, val, 0, net) ;
-    
-    %% Accuracy per epoch
-    correctPredictions = sum(pre_label(1,:) == spd_label');
-    epochAccuracies(epoch) = correctPredictions / numel(spd_label);
+    [net,stats.train, trainAccuracy] = process_epoch(opts, epoch, spd_train, train, learningRate, net) ;
+    [net,stats.val, valAccuracy] = process_epoch(opts, epoch, spd_train, val, 0, net) ;
 
+    epochAccuracies(epoch) = (valAccuracy+trainAccuracy)/2;
    %% doing classification
 %     Train_label = spd_train.spd.label(train);
 %     Val_label = spd_train.spd.label(val);
@@ -103,13 +103,13 @@ for epoch = 1 : opts.numEpochs
      end
 
      averageAccuracy = mean(epochAccuracies);
-     info.averageAccuracy = averageAccuracy ;
+     info.averageAccuracy = averageAccuracy;
      fprintf('Average accuracy for this block: %.4f\n', averageAccuracy);
 end  
 
 
     
-function [net,stats] = process_epoch(opts, epoch, spd_train, trainInd, learningRate, net)
+function [net,stats, epochAccuracy] = process_epoch(opts, epoch, spd_train, trainInd, learningRate, net)
 
 training = learningRate > 0 ;
 count1 = 0;
@@ -124,6 +124,8 @@ stats = [0 ; 0; 0; 0; 0] ;
 % stats = [0 ; 0; 0] ; % for softmax 
 
 all_predictions = [];
+
+epochAccuracy = 0;
 
 numGpus = numel(opts.gpus) ;
 if numGpus >= 1
@@ -184,6 +186,7 @@ for ib = 1 : batchSize : length(trainInd) % select the training samples. Here, 1
         [~,pre_label] = sort(predictions, 'descend');
         all_predictions = cat(2, all_predictions, pre_label);
     end
+
 
     % Plotting heatmaps every 10th epoch for the first batch
     % if mod(epoch, 10) == 0 && flag == 1
@@ -519,12 +522,21 @@ for ib = 1 : batchSize : length(trainInd) % select the training samples. Here, 1
     % After all batches are processed
     if ~training
         fprintf('All predictions for validation set at epoch %d:\n', epoch);
-        disp(all_predictions);
+        % disp(all_predictions);
+
+        % correctPredictions = sum(all_predictions(1,:) == spd_label');
+        % epochAccuracy = correctPredictions / numel(spd_label);
 
         if epoch == opts.numEpochs
             predictionsFileName = fullfile(opts.dataDir, 'final_predictions.mat');
             save(predictionsFileName, 'all_predictions');
         end
+    end
+
+    % Ensure all_predictions is populated and matches the expected size
+    if ~isempty(all_predictions) && size(all_predictions, 2) == numel(spd_label)
+        correctPredictions = sum(all_predictions(1,:) == spd_label');
+        epochAccuracy = correctPredictions / numel(spd_label); % Update epochAccuracy based on actual calculation
     end
     
     stats = stats+[batchTime ; res(end).x; res(7).obj; res(21).obj; error]; % works even when stats=[] res(15).obj
